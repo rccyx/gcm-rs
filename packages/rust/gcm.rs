@@ -287,4 +287,3 @@ mod tests {
         assert_eq!(ghash.msg_len, 0);
     }
 }
-
