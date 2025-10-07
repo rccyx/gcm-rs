@@ -44,6 +44,7 @@ impl GcmGhash {
     }
 
     pub fn update(&mut self, msg: &Bytes) {
+        // drain any partial buffer first
         if self.msg_buffer_offset > 0 {
             let taking = std::cmp::min(
                 msg.len(),
@@ -53,7 +54,7 @@ impl GcmGhash {
                 ..self.msg_buffer_offset + taking]
                 .copy_from_slice(&msg[..taking]);
             self.msg_buffer_offset += taking;
-            assert!(self.msg_buffer_offset <= BLOCK_SIZE);
+            debug_assert!(self.msg_buffer_offset <= BLOCK_SIZE);
 
             self.msg_len += taking;
 
@@ -62,7 +63,12 @@ impl GcmGhash {
                     ghash::Block::from_slice(&self.msg_buffer),
                 ));
                 self.msg_buffer_offset = 0;
-                return self.update(&msg[taking..]);
+
+                // recurse on the rest without the already-taken prefix
+                if taking < msg.len() {
+                    self.update(&msg[taking..]);
+                }
+                return;
             } else {
                 return;
             }
@@ -70,28 +76,22 @@ impl GcmGhash {
 
         self.msg_len += msg.len();
 
-        assert_eq!(self.msg_buffer_offset, 0);
-        let full_blocks = msg.len() / BLOCK_SIZE;
-        let leftover = msg.len() - BLOCK_SIZE * full_blocks;
-        assert!(leftover < BLOCK_SIZE);
-        if full_blocks > 0 {
-            let blocks = unsafe {
-                std::slice::from_raw_parts(
-                    msg[..BLOCK_SIZE * full_blocks].as_ptr().cast(),
-                    full_blocks,
-                )
-            };
-            assert_eq!(
-                std::mem::size_of_val(blocks) + leftover,
-                std::mem::size_of_val(msg)
-            );
-            self.ghash.update(blocks);
+        // process full blocks safely (no unsafe cast)
+        let mut iter = msg.chunks_exact(BLOCK_SIZE);
+        for chunk in &mut iter {
+            self.ghash.update(std::slice::from_ref(
+                ghash::Block::from_slice(chunk),
+            ));
         }
 
-        self.msg_buffer[0..leftover]
-            .copy_from_slice(&msg[full_blocks * BLOCK_SIZE..]);
-        self.msg_buffer_offset = leftover;
-        assert!(self.msg_buffer_offset < BLOCK_SIZE);
+        // stash leftover
+        let leftover = iter.remainder();
+        if !leftover.is_empty() {
+            self.msg_buffer[..leftover.len()]
+                .copy_from_slice(leftover);
+            self.msg_buffer_offset = leftover.len();
+            debug_assert!(self.msg_buffer_offset < BLOCK_SIZE);
+        }
     }
 
     /// Finalize GHASH and return the authentication subtag.
@@ -216,6 +216,7 @@ impl Encrypt for Aes256Gcm {
 
 impl Decrypt for Aes256Gcm {
     fn decrypt(&mut self, buf: &mut Bytes) {
+        // GHASH must be computed over ciphertext during decryption
         self.ghash.update(buf);
         self.ctr.xor(buf);
     }
@@ -240,6 +241,7 @@ impl Decrypt for Aes256Gcm {
 mod tests {
     use super::*;
     use crate::random::{gen_key, gen_nonce};
+    use getrandom::getrandom;
 
     #[test]
     fn test_aes256_gcm_encryption_decryption() {
@@ -285,5 +287,134 @@ mod tests {
         assert_eq!(ghash.msg_buffer_offset, 0);
         assert_eq!(ghash.ad_len, 0);
         assert_eq!(ghash.msg_len, 0);
+    }
+
+    #[test]
+    fn test_multiblock_encrypt_decrypt_ge_32_bytes() {
+        let key = gen_key();
+        let nonce = gen_nonce();
+        let ad = b"header";
+
+        // 48 bytes to cross block boundaries
+        let mut pt = [0u8; 48];
+        for (i, b) in pt.iter_mut().enumerate() {
+            *b = i as u8;
+        }
+
+        let mut enc = Aes256Gcm::new(&key, &nonce, ad).unwrap();
+        let mut ct = pt.to_vec();
+        enc.encrypt(&mut ct);
+        let tag = enc.compute_tag();
+
+        let mut dec = Aes256Gcm::new(&key, &nonce, ad).unwrap();
+        dec.decrypt(&mut ct);
+        assert_eq!(ct, pt);
+        assert!(dec.verify_tag(&tag).is_ok());
+    }
+
+    #[test]
+    fn test_aad_variation_tag_mismatch() {
+        let key = gen_key();
+        let nonce = gen_nonce();
+        let mut pt = b"The same message".to_vec();
+
+        // Encrypt with AD = "A"
+        let mut enc_a = Aes256Gcm::new(&key, &nonce, b"A").unwrap();
+        enc_a.encrypt(&mut pt);
+        let tag_a = enc_a.compute_tag();
+
+        // Try to verify with AD = "B"
+        let mut dec_b = Aes256Gcm::new(&key, &nonce, b"B").unwrap();
+        // dec path expects ciphertext, so reapply same ciphertext
+        let mut ct = pt.clone();
+        dec_b.decrypt(&mut ct); // produces wrong plaintext but we care about tag
+        assert!(matches!(
+            dec_b.verify_tag(&tag_a),
+            Err(Error::InvalidTag)
+        ));
+    }
+
+    #[test]
+    fn test_tamper_ciphertext_tag_fails() {
+        let key = gen_key();
+        let nonce = gen_nonce();
+        let ad = b"ad";
+        let mut pt = b"attack at dawn".to_vec();
+
+        let mut enc = Aes256Gcm::new(&key, &nonce, ad).unwrap();
+        enc.encrypt(&mut pt);
+        let tag = enc.compute_tag();
+
+        // Tamper a byte in ciphertext
+        pt[3] ^= 0xFF;
+
+        let mut dec = Aes256Gcm::new(&key, &nonce, ad).unwrap();
+        let mut ct = pt.clone();
+        dec.decrypt(&mut ct);
+        assert!(matches!(
+            dec.verify_tag(&tag),
+            Err(Error::InvalidTag)
+        ));
+    }
+
+    #[test]
+    fn test_nonce_reuse_different_messages_different_tags() {
+        let key = gen_key();
+        let nonce = gen_nonce();
+        let ad = b"hdr";
+
+        let mut m1 = b"first message".to_vec();
+        let mut m2 = b"second message longer".to_vec();
+
+        let mut e1 = Aes256Gcm::new(&key, &nonce, ad).unwrap();
+        e1.encrypt(&mut m1);
+        let t1 = e1.compute_tag();
+
+        let mut e2 = Aes256Gcm::new(&key, &nonce, ad).unwrap();
+        e2.encrypt(&mut m2);
+        let t2 = e2.compute_tag();
+
+        assert_ne!(t1, t2);
+    }
+
+    #[test]
+    fn test_fuzz_no_panic_and_invalid_inputs() {
+        // quick and light fuzz
+        for _ in 0..64 {
+            let key = gen_key();
+            let nonce = gen_nonce();
+
+            // random length up to 5 blocks
+            let mut len_bytes = [0u8; 1];
+            getrandom(&mut len_bytes).unwrap();
+            let len = (len_bytes[0] as usize) % (BLOCK_SIZE * 5 + 1);
+
+            let mut pt = vec![0u8; len];
+            getrandom(&mut pt).unwrap();
+
+            let ad_len = (len_bytes[0] as usize) % 40;
+            let mut ad = vec![0u8; ad_len];
+            getrandom(&mut ad).unwrap();
+
+            // normal round-trip should not panic
+            let mut enc = Aes256Gcm::new(&key, &nonce, &ad).unwrap();
+            let mut ct = pt.clone();
+            enc.encrypt(&mut ct);
+            let tag = enc.compute_tag();
+
+            let mut dec = Aes256Gcm::new(&key, &nonce, &ad).unwrap();
+            dec.decrypt(&mut ct);
+            assert_eq!(ct, pt);
+            assert!(dec.verify_tag(&tag).is_ok());
+
+            // invalid tag length
+            let mut dec2 = Aes256Gcm::new(&key, &nonce, &ad).unwrap();
+            let mut ct2 = pt.clone();
+            dec2.decrypt(&mut ct2);
+            assert!(matches!(
+                dec2.verify_tag(&vec![0u8; TAG_SIZE - 1]),
+                Err(Error::InvalidTag)
+            ));
+        }
     }
 }
