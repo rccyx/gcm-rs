@@ -1,9 +1,5 @@
-<div align="center">
-
 # gcm_rs
 
-AES-256-GCM in Rust with a Python extension via PyO3. Safe internals, zeroize on sensitive buffers, and a simple API for authenticated encryption.
-</div>
 
 ## What It Does
 
@@ -17,13 +13,13 @@ AES-256-GCM in Rust with a Python extension via PyO3. Safe internals, zeroize on
 
 ## Setup
 
-### Python
+#### Python
 
 ```bash
 pip install gcm_rs
 ```
 
-### Rust
+#### Rust
 
 ```bash
 cargo add gcm_rs
