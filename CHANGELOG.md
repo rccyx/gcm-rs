@@ -1,5 +1,19 @@
 # Changelog
 
+## v2.0.1 2025-10-07
+
+### Changes since v2.0.0
+- 4be7cbe chore: bump version to 2.0.1
+- dfdd5fd update lock
+- 2502925 release version 2
+
+### Authors
+- rccyx (3 commits)
+
+### Compare
+https://github.com/ashgw/gcm-rs/compare/v2.0.0...v2.0.1
+
+
 ## v2.0.0 2025-10-07
 
 ### Changes since 274f456b67794f915f66747a464ac4835b9ed870
