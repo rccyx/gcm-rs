@@ -28,4 +28,5 @@ subtle = "2.3"
 anyhow = "1.0.86"
 pyo3 = { version = "0.18", features = ["extension-module", "abi3", "abi3-py37"] }
 getrandom = "0.2"
+zeroize = "1.8.2"
 

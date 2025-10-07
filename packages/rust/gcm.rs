@@ -9,12 +9,15 @@ use aes::Aes256;
 use ghash::universal_hash::UniversalHash;
 use ghash::GHash;
 use subtle::ConstantTimeEq;
+use zeroize::Zeroize;
 
 #[derive(Clone)]
 pub struct GcmGhash {
     ghash: GHash,
+    // sensitive buffers
     ghash_padding: BlockBytes,
     msg_buffer: BlockBytes,
+    // non-sensitive counters/lengths
     msg_buffer_offset: usize,
     ad_len: usize,
     msg_len: usize,
@@ -91,7 +94,9 @@ impl GcmGhash {
         assert!(self.msg_buffer_offset < BLOCK_SIZE);
     }
 
-    pub fn finalize(mut self) -> BlockBytes {
+    /// Finalize GHASH and return the authentication subtag.
+    /// Does not consume `self` to avoid moving fields out of a type that implements Drop.
+    pub fn finalize_tag(&mut self) -> BlockBytes {
         if self.msg_buffer_offset > 0 {
             self.ghash.update_padded(
                 &self.msg_buffer[..self.msg_buffer_offset],
@@ -106,13 +111,30 @@ impl GcmGhash {
         );
 
         self.ghash.update(&[final_block.into()]);
-        let mut hash = self.ghash.finalize();
+        let mut hash = self.ghash.clone().finalize();
 
         for (i, b) in hash.iter_mut().enumerate() {
             *b ^= self.ghash_padding[i];
         }
 
         hash.into()
+    }
+}
+
+impl Zeroize for GcmGhash {
+    fn zeroize(&mut self) {
+        self.ghash_padding.zeroize();
+        self.msg_buffer.zeroize();
+        // integers do not implement Zeroize; wipe manually
+        self.msg_buffer_offset = 0;
+        self.ad_len = 0;
+        self.msg_len = 0;
+    }
+}
+
+impl Drop for GcmGhash {
+    fn drop(&mut self) {
+        self.zeroize();
     }
 }
 
@@ -132,9 +154,11 @@ pub fn setup(
     let mut h = ZEROED_BLOCK;
     aes256.encrypt_block(GenericArray::from_mut_slice(&mut h));
 
+    // Start CTR at block 1 per GCM spec
     let mut ctr = Aes256Ctr32::new(aes256, nonce, 1)?;
 
     let mut ghash_padding = ZEROED_BLOCK;
+    // This contains keystream derived from key and nonce. Consider it sensitive.
     ctr.xor(&mut ghash_padding);
 
     let ghash = GcmGhash::new(&h, ghash_padding, associated_data)?;
@@ -156,8 +180,16 @@ impl Aes256Gcm {
         Ok(Self { ctr, ghash })
     }
 
-    pub fn finalize(self) -> BlockBytes {
-        self.ghash.finalize()
+    pub fn finalize(mut self) -> BlockBytes {
+        self.ghash.finalize_tag()
+    }
+}
+
+// Ensure buffers are wiped on drop if tag was not computed.
+impl Drop for Aes256Gcm {
+    fn drop(&mut self) {
+        // ctr state and AES internals are handled by their crates with "zeroize" features.
+        self.ghash.zeroize();
     }
 }
 
@@ -231,4 +263,28 @@ mod tests {
         assert_eq!(&ciphertext, plaintext);
         assert!(gcm_decrypt.verify_tag(&tag).is_ok());
     }
+
+    #[test]
+    fn test_zeroize_gcmghash_buffers() {
+        // Build a GHASH with non-zero buffers
+        let key = gen_key();
+        let nonce = gen_nonce();
+        let ad = b"ad";
+        let (_ctr, mut ghash) = setup(&key, &nonce, ad).unwrap();
+
+        // Dirty the internal buffers
+        ghash.msg_buffer.copy_from_slice(&[0xAAu8; BLOCK_SIZE]);
+        ghash.ghash_padding.copy_from_slice(&[0xBBu8; BLOCK_SIZE]);
+        ghash.msg_buffer_offset = 7;
+        ghash.ad_len = 123;
+        ghash.msg_len = 456;
+
+        ghash.zeroize();
+        assert_eq!(ghash.msg_buffer, [0u8; BLOCK_SIZE]);
+        assert_eq!(ghash.ghash_padding, [0u8; BLOCK_SIZE]);
+        assert_eq!(ghash.msg_buffer_offset, 0);
+        assert_eq!(ghash.ad_len, 0);
+        assert_eq!(ghash.msg_len, 0);
+    }
 }
+
