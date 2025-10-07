@@ -1,11 +1,11 @@
 
 [package]
 name = "gcm_rs"
-version = "1.0.6-beta"
-authors = ["ashrefgw@proton.me"]
+version = "1.0.0"
+authors = ["oss@rccyx.com"]
 edition = "2021"
 description = "AES-256 GCM"
-repository = "https://github.com/ashgw/gcm_rs"
+repository = "https://github.com/rccyx/gcm_rs"
 license = "GPL-3.0"
 
 [lib]
@@ -28,3 +28,4 @@ subtle = "2.3"
 anyhow = "1.0.86"
 pyo3 = { version = "0.18", features = ["extension-module", "abi3", "abi3-py37"] }
 getrandom = "0.2"
+
