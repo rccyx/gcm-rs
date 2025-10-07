@@ -12,7 +12,11 @@ impl Aes256Ctr32 {
     ///
     /// Per NIST SP 800-38D GCM, payload processing uses the keystream that
     /// begins at counter block J0 + 1. When integrating with GCM pass `start_block = 1`.
-    pub fn new(algo: Aes256, nonce: &Nonce, start_block: StartBlock) -> Result<Self> {
+    pub fn new(
+        algo: Aes256,
+        nonce: &Nonce,
+        start_block: StartBlock,
+    ) -> Result<Self> {
         if !is_valid_nonce_size(nonce, NONCE_SIZE) {
             return Err(Error::InvalidNonceSize {
                 expected_size: NONCE_SIZE,
@@ -21,17 +25,21 @@ impl Aes256Ctr32 {
         let mut _nonce_block = [0u8; BLOCK_SIZE];
         _nonce_block[0..NONCE_SIZE].copy_from_slice(nonce);
 
-        let mut ctr = ctr::Ctr32BE::from_core(ctr::CtrCore::inner_iv_init(
-            algo,
-            &_nonce_block.into(),
-        ));
+        let mut ctr = ctr::Ctr32BE::from_core(
+            ctr::CtrCore::inner_iv_init(algo, &_nonce_block.into()),
+        );
         ctr.seek(BLOCK_SIZE * (start_block as usize));
         Ok(Self(ctr))
     }
 
-    pub fn from_key(key: &Key, nonce: &Nonce, start_block: StartBlock) -> Result<Self> {
+    pub fn from_key(
+        key: &Key,
+        nonce: &Nonce,
+        start_block: StartBlock,
+    ) -> Result<Self> {
         Self::new(
-            Aes256::new_from_slice(key).map_err(|_| Error::InvalidKeySize)?,
+            Aes256::new_from_slice(key)
+                .map_err(|_| Error::InvalidKeySize)?,
             nonce,
             start_block,
         )
@@ -56,16 +64,17 @@ mod tests {
         let start_block: StartBlock = 0;
         let plaintext = b"plaintext";
 
-        let mut encryption = Aes256Ctr32::from_key(&key, &nonce, start_block).unwrap();
+        let mut encryption =
+            Aes256Ctr32::from_key(&key, &nonce, start_block).unwrap();
 
         let mut ciphertext = plaintext.to_vec();
         encryption.xor(&mut ciphertext);
 
-        let mut decryption = Aes256Ctr32::from_key(&key, &nonce, start_block).unwrap();
+        let mut decryption =
+            Aes256Ctr32::from_key(&key, &nonce, start_block).unwrap();
 
         decryption.xor(&mut ciphertext);
 
         assert_eq!(&ciphertext, plaintext);
     }
 }
-

@@ -1,5 +1,5 @@
 use crate::constants::TAG_SIZE;
-use crate::constants::{C_SIZE, NONCE_SIZE, ZEROED_BLOCK};
+use crate::constants::{BLOCK_SIZE, NONCE_SIZE, ZEROED_BLOCK};
 use crate::ctr::Aes256Ctr32;
 use crate::error::Error;
 use crate::types::{BlockBytes, Bytes, Key, Nonce, Result};
@@ -44,17 +44,17 @@ impl GcmGhash {
         if self.msg_buffer_offset > 0 {
             let taking = std::cmp::min(
                 msg.len(),
-                C_SIZE - self.msg_buffer_offset,
+                BLOCK_SIZE - self.msg_buffer_offset,
             );
             self.msg_buffer[self.msg_buffer_offset
                 ..self.msg_buffer_offset + taking]
                 .copy_from_slice(&msg[..taking]);
             self.msg_buffer_offset += taking;
-            assert!(self.msg_buffer_offset <= C_SIZE);
+            assert!(self.msg_buffer_offset <= BLOCK_SIZE);
 
             self.msg_len += taking;
 
-            if self.msg_buffer_offset == C_SIZE {
+            if self.msg_buffer_offset == BLOCK_SIZE {
                 self.ghash.update(std::slice::from_ref(
                     ghash::Block::from_slice(&self.msg_buffer),
                 ));
@@ -68,13 +68,13 @@ impl GcmGhash {
         self.msg_len += msg.len();
 
         assert_eq!(self.msg_buffer_offset, 0);
-        let full_blocks = msg.len() / C_SIZE;
-        let leftover = msg.len() - C_SIZE * full_blocks;
-        assert!(leftover < C_SIZE);
+        let full_blocks = msg.len() / BLOCK_SIZE;
+        let leftover = msg.len() - BLOCK_SIZE * full_blocks;
+        assert!(leftover < BLOCK_SIZE);
         if full_blocks > 0 {
             let blocks = unsafe {
                 std::slice::from_raw_parts(
-                    msg[..C_SIZE * full_blocks].as_ptr().cast(),
+                    msg[..BLOCK_SIZE * full_blocks].as_ptr().cast(),
                     full_blocks,
                 )
             };
@@ -86,9 +86,9 @@ impl GcmGhash {
         }
 
         self.msg_buffer[0..leftover]
-            .copy_from_slice(&msg[full_blocks * C_SIZE..]);
+            .copy_from_slice(&msg[full_blocks * BLOCK_SIZE..]);
         self.msg_buffer_offset = leftover;
-        assert!(self.msg_buffer_offset < C_SIZE);
+        assert!(self.msg_buffer_offset < BLOCK_SIZE);
     }
 
     pub fn finalize(mut self) -> BlockBytes {

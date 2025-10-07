@@ -9,4 +9,3 @@ pub type BlockBytes = [u8; BLOCK_SIZE];
 pub type Nonce = Bytes;
 pub type Key = Bytes;
 pub type StartBlock = u32;
-
