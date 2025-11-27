@@ -1,7 +1,7 @@
 
 [package]
 name = "gcm_rs"
-version = "2.0.4"
+version = "2.0.5"
 authors = ["oss@rccyx.com"]
 edition = "2021"
 description = "AES-256 GCM"
