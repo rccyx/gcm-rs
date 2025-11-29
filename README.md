@@ -4,7 +4,7 @@ Low level implentation of AES-256 GCM in Rust with Python bindings. Explicit, an
 
 > [!Warning]
 >
-> This create is **still experimental**, it's **not** audited. The API is still moving, the internals are still in flux, and breaking changes ~~can~~ will happen at any minor or patch release.
+> This library is **still experimental**, it's **not** audited. The API is still moving, the internals are still in flux, and breaking changes ~~can~~ will happen at any minor or patch release.
 
 ## What it does
 
@@ -14,7 +14,7 @@ Low level implentation of AES-256 GCM in Rust with Python bindings. Explicit, an
 - Constant time authentication tag verification
 - Zeroization of sensitive buffers
 - Rust crate for direct use
-- Python bindings that expose safe random key and nonce helpers
+- Python bindings for the create through a PyPI package
 
 ## Install
 
@@ -32,9 +32,9 @@ pip install gcm_rs
 
 The Python package ships prebuilt wheels for common architectures when available. If that fails, it will build the extension from source, so you need a Rust toolchain installed.
 
-## Quickstart
+### Rust API usage
 
-### Rust example
+#### Normal flow
 
 ```rust
 use gcm_rs::gcm::{Aes256Gcm, Encrypt, Decrypt};
@@ -64,22 +64,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-### Python example
-
-The Rust core already implements full AES-GCM. Higher level Python encryption and decryption helpers are being designed and are **not** considered stable yet. Expect the Python API to change more than the Rust core while the project is in super beta. These are the only two exported functions as of now, simply as a POC.
-
-```python
-from gcm_rs import gen_key, gen_nonce
-
-key = gen_key()     # 32 bytes
-nonce = gen_nonce() # 12 bytes
-
-print(len(key), len(nonce))  # 32 12
-```
-
-## Rust API overview
-
-### One shot encrypt / decrypt
+#### One shot encrypt / decrypt
 
 ```rust
 use gcm_rs::gcm::{Aes256Gcm, Encrypt, Decrypt};
@@ -112,7 +97,7 @@ fn decrypt_one_shot(
 }
 ```
 
-### Streaming usage
+#### Streaming usage
 
 You can feed arbitrarily large buffers in chunks. GHASH keeps internal state and only finalizes in `compute_tag` / `verify_tag`.
 
@@ -144,6 +129,19 @@ let mut ct = chunks.concat();
 let mut dec = Aes256Gcm::new(&key, &nonce, ad).unwrap();
 dec.decrypt(&mut ct);
 dec.verify_tag(&tag).unwrap();
+```
+
+### Python usage
+
+The Rust core already implements full AES-GCM. Higher level Python encryption and decryption helpers aren't shipped as they're **not** considered stable yet. Expect the Python API to change more than the Rust core while the project is in beta. These are the only two exported functions as of now, simply as a POC.
+
+```python
+from gcm_rs import gen_key, gen_nonce
+
+key = gen_key()     # 32 bytes
+nonce = gen_nonce() # 12 bytes
+
+print(len(key), len(nonce))  # 32 12
 ```
 
 ## Security notes
